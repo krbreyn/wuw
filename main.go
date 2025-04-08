@@ -96,7 +96,7 @@ func main() {
 		}
 
 		imports := make([]string, 0, len(imports_map))
-		for i, _ := range imports_map {
+		for i := range imports_map {
 			imports = append(imports, i)
 		}
 		sort.Strings(imports)
@@ -146,8 +146,12 @@ func ParseFileForImports(r *bufio.Reader) ([]string, error) {
 				if err != nil {
 					return nil, err
 				}
-				if strings.TrimSpace(line) == ")" {
+				ts := strings.TrimSpace(line)
+				if ts == ")" {
 					break
+				}
+				if ts == "" {
+					continue
 				}
 				split := strings.Fields(line)
 				if len(split) == 2 {
