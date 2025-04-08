@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -81,7 +82,26 @@ func main() {
 			continue
 		}
 
-		pkgs = append(pkgs, Package{Name: pkg_name})
+		// get imports
+		imports_map := make(map[string]struct{})
+		for _, f := range dir.Files {
+			i, err := ParseFileForImports(f.R)
+			if err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			for _, s := range i {
+				imports_map[s] = struct{}{}
+			}
+		}
+
+		imports := make([]string, 0, len(imports_map))
+		for i, _ := range imports_map {
+			imports = append(imports, i)
+		}
+		sort.Strings(imports)
+
+		pkgs = append(pkgs, Package{Name: pkg_name, Dependencies: imports})
 	}
 
 	if len(errs) != 0 {
@@ -102,8 +122,50 @@ func FilterDependencies(deps []string, urls, external, std bool) []string {
 	return nil
 }
 
-func ParseFileForImports(r *bufio.Reader) []string {
-	return nil
+// TODO properly parse instead of relying on gofmt conventions
+func ParseFileForImports(r *bufio.Reader) ([]string, error) {
+	var imports []string
+
+	var linesWithoutImport int
+	for {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(line) == "" {
+			linesWithoutImport++
+			continue
+		}
+		if strings.Contains(line, "import \"") {
+			split := strings.Fields(line)
+			imports = append(imports, split[1])
+			continue
+		} else if strings.Contains(line, "import (") {
+			for {
+				line, err := r.ReadString('\n')
+				if err != nil {
+					return nil, err
+				}
+				if strings.TrimSpace(line) == ")" {
+					break
+				}
+				split := strings.Fields(line)
+				if len(split) == 2 {
+					imports = append(imports, split[1])
+				} else {
+					imports = append(imports, split[0])
+				}
+			}
+		} else {
+			linesWithoutImport++
+		}
+
+		if linesWithoutImport >= 5 {
+			break
+		}
+	}
+
+	return imports, nil
 }
 
 func GetPackageName(d *Directory) (string, error) {
