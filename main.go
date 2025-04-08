@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"go/build"
 	"os"
 	"path/filepath"
 	"slices"
@@ -120,7 +121,8 @@ func FilterDependencies(deps []string, external, noStd bool) []string {
 	var ret []string
 	for _, d := range deps {
 		if noStd {
-			if strings.Contains(d, "golang.org/x/") || !strings.Contains(d, ".") {
+			pkg, err := build.Import(d, "", build.FindOnly)
+			if strings.Contains(d, "golang.org/x/") || (err == nil && pkg.Goroot) {
 				continue
 			}
 		}
@@ -161,11 +163,13 @@ func ParseFileForImports(r *bufio.Reader) ([]string, error) {
 					continue
 				}
 				split := strings.Fields(line)
+				var imp string
 				if len(split) == 2 {
-					imports = append(imports, split[1])
+					imp = split[1]
 				} else {
-					imports = append(imports, split[0])
+					imp = split[0]
 				}
+				imports = append(imports, imp[1:len(imp)-1])
 			}
 		} else {
 			linesWithoutImport++
