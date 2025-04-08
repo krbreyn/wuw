@@ -23,6 +23,7 @@ type FileReader struct {
 
 type Package struct {
 	Name string
+	Path string
 	Deps []string
 }
 
@@ -38,15 +39,38 @@ func main() {
 	flag.Usage = usage
 
 	// subdirsVar := flag.Bool("subdirs", false, "Include sub-directories/packages.")
-	// externalVar := flag.Bool("no-external", false, "Exclude external package dependencies (except for golang.org/x/).")
-	noStdVar := flag.Bool("no-std", false, "Exclude stdlib packages (including golang.org/x/")
+	noStdVar := flag.Bool("no-std", false, "Exclude stdlib packages (including golang.org/x/)")
 
 	flag.Parse()
 
 	args := flag.Args()
 	if len(args) == 0 {
-		flag.Usage()
-		os.Exit(1)
+		scanner := bufio.NewScanner(os.Stdin)
+
+		fi, err := os.Stdin.Stat()
+		if err != nil {
+			panic(err)
+		}
+		if fi.Mode()&os.ModeCharDevice != 0 {
+			goto noStdin
+		}
+
+		for scanner.Scan() {
+			text := scanner.Text()
+			args = append(args, text)
+		}
+
+		if err := scanner.Err(); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+
+	noStdin:
+		if len(args) == 0 {
+			fmt.Println("No args provided. Displaying usage...")
+			flag.Usage()
+			os.Exit(1)
+		}
 	}
 
 	var pkgs []Package
@@ -55,13 +79,11 @@ func main() {
 	for _, d := range args {
 		entry, err := os.ReadDir(d)
 		if err != nil {
-			fmt.Println("error reading directory:", err.Error())
-			os.Exit(1)
+			continue
 		}
 
 		go_files := GetGoFiles(d, entry)
 		if len(go_files) == 0 {
-			errs = append(errs, fmt.Errorf("error: no .go files in %s", d))
 			continue
 		}
 
@@ -75,14 +97,12 @@ func main() {
 			dir.Files = append(dir.Files, &FileReader{g, bufio.NewReader(f)})
 		}
 
-		// get package name
 		pkg_name, err := GetPackageName(&dir)
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
 
-		// get imports
 		var imports []string
 		for _, f := range dir.Files {
 			i, err := ParseFileForImports(f.R)
@@ -97,7 +117,7 @@ func main() {
 			}
 		}
 
-		pkgs = append(pkgs, Package{Name: pkg_name, Deps: imports})
+		pkgs = append(pkgs, Package{Name: pkg_name, Path: d, Deps: FilterDependencies(imports, *noStdVar)})
 	}
 
 	if len(errs) != 0 {
@@ -105,19 +125,19 @@ func main() {
 		for _, err := range errs {
 			fmt.Println(err)
 		}
-		os.Exit(1)
-	} else {
-		for _, p := range pkgs {
-			for _, d := range FilterDependencies(p.Deps, false, *noStdVar) {
-				fmt.Printf("%s %s\n", p.Name, d)
-			}
-		}
-		os.Exit(0)
 	}
+
+	for _, p := range pkgs {
+		fmt.Printf("%s:\n%s", p.Path, p.Name)
+		for _, d := range p.Deps {
+			fmt.Printf("\t%s\n", d)
+		}
+	}
+	os.Exit(0)
 }
 
 // TODO
-func FilterDependencies(deps []string, external, noStd bool) []string {
+func FilterDependencies(deps []string, noStd bool) []string {
 	var ret []string
 	for _, d := range deps {
 		if noStd {
@@ -126,6 +146,7 @@ func FilterDependencies(deps []string, external, noStd bool) []string {
 				continue
 			}
 		}
+
 		ret = append(ret, d)
 	}
 	return ret
@@ -141,13 +162,15 @@ func ParseFileForImports(r *bufio.Reader) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
+
 		if strings.TrimSpace(line) == "" {
 			linesWithoutImport++
 			continue
 		}
+
 		if strings.Contains(line, "import \"") {
 			split := strings.Fields(line)
-			imports = append(imports, split[1])
+			imports = append(imports, split[1][1:len(split[1])-1])
 			continue
 		} else if strings.Contains(line, "import (") {
 			for {
@@ -155,6 +178,7 @@ func ParseFileForImports(r *bufio.Reader) ([]string, error) {
 				if err != nil {
 					return nil, err
 				}
+
 				ts := strings.TrimSpace(line)
 				if ts == ")" {
 					break
@@ -162,6 +186,7 @@ func ParseFileForImports(r *bufio.Reader) ([]string, error) {
 				if ts == "" {
 					continue
 				}
+
 				split := strings.Fields(line)
 				var imp string
 				if len(split) == 2 {
@@ -169,6 +194,7 @@ func ParseFileForImports(r *bufio.Reader) ([]string, error) {
 				} else {
 					imp = split[0]
 				}
+
 				imports = append(imports, imp[1:len(imp)-1])
 			}
 		} else {
