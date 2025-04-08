@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -21,8 +21,8 @@ type FileReader struct {
 }
 
 type Package struct {
-	Name         string
-	Dependencies []string
+	Name string
+	Deps []string
 }
 
 var usage = func() {
@@ -37,9 +37,8 @@ func main() {
 	flag.Usage = usage
 
 	// subdirsVar := flag.Bool("subdirs", false, "Include sub-directories/packages.")
-	// urlsVar := flag.Bool("urls", false, "Output full URLs instead of abbreviated package names.")
-	// externalVar := flag.Bool("no-external", false, "Exclude external package dependencies (except for golang.org/x/, if std).")
-	// stdVar := flag.Bool("std", false, "Include stdlib packages (including golang.org/x/")
+	// externalVar := flag.Bool("no-external", false, "Exclude external package dependencies (except for golang.org/x/).")
+	noStdVar := flag.Bool("no-std", false, "Exclude stdlib packages (including golang.org/x/")
 
 	flag.Parse()
 
@@ -83,7 +82,7 @@ func main() {
 		}
 
 		// get imports
-		imports_map := make(map[string]struct{})
+		var imports []string
 		for _, f := range dir.Files {
 			i, err := ParseFileForImports(f.R)
 			if err != nil {
@@ -91,17 +90,13 @@ func main() {
 				continue
 			}
 			for _, s := range i {
-				imports_map[s] = struct{}{}
+				if !slices.Contains(imports, s) {
+					imports = append(imports, s)
+				}
 			}
 		}
 
-		imports := make([]string, 0, len(imports_map))
-		for i := range imports_map {
-			imports = append(imports, i)
-		}
-		sort.Strings(imports)
-
-		pkgs = append(pkgs, Package{Name: pkg_name, Dependencies: imports})
+		pkgs = append(pkgs, Package{Name: pkg_name, Deps: imports})
 	}
 
 	if len(errs) != 0 {
@@ -112,17 +107,29 @@ func main() {
 		os.Exit(1)
 	} else {
 		for _, p := range pkgs {
-			fmt.Println(p)
+			for _, d := range FilterDependencies(p.Deps, false, *noStdVar) {
+				fmt.Printf("%s %s\n", p.Name, d)
+			}
 		}
 		os.Exit(0)
 	}
 }
 
-func FilterDependencies(deps []string, urls, external, std bool) []string {
-	return nil
+// TODO
+func FilterDependencies(deps []string, external, noStd bool) []string {
+	var ret []string
+	for _, d := range deps {
+		if noStd {
+			if strings.Contains(d, "golang.org/x/") || !strings.Contains(d, ".") {
+				continue
+			}
+		}
+		ret = append(ret, d)
+	}
+	return ret
 }
 
-// TODO properly parse instead of relying on gofmt conventions
+// TODO properly parse instead of relying on gofmt conventions?
 func ParseFileForImports(r *bufio.Reader) ([]string, error) {
 	var imports []string
 
@@ -184,11 +191,7 @@ func GetPackageName(d *Directory) (string, error) {
 
 		fields := strings.Fields(line)
 
-		if len(fields) != 2 {
-			return "", fmt.Errorf("error: malformed package line: %s in file %s", line, r.Name)
-		}
-
-		if fields[0] != "package" {
+		if len(fields) != 2 || fields[0] != "package" {
 			return "", fmt.Errorf("error: malformed package line: %s in file %s", line, r.Name)
 		}
 
